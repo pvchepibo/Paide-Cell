@@ -1,16 +1,16 @@
 import axios from 'axios';
 
 export const api = {
-  createTransaction: async (data: { customerId: string; product: any; method: string }) => {
-    const response = await axios.post('/api/transactions/create', data);
+  createCashTransaction: async (data: { customerId: string; product: any }) => {
+    const response = await axios.post('/api/transaction/cash', data);
     return response.data;
   },
-  executeOrder: async (transactionId: string) => {
-    const response = await axios.post('/api/supplier/order', { transactionId });
+  createQrisTransaction: async (data: { customerId: string; product: any }) => {
+    const response = await axios.post('/api/transaction/qris', data);
     return response.data;
   },
   checkStatus: async (transactionId: string) => {
-    const response = await axios.get(`/api/transactions/status/${transactionId}`);
+    const response = await axios.get(`/api/transaction/status/${transactionId}`);
     return response.data;
   }
 };

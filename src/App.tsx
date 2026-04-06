@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Phone, 
   Signal, 
@@ -21,6 +21,7 @@ import {
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { QRCodeSVG } from 'qrcode.react';
 import { api } from './services/api';
 import { Category, Denomination, Transaction } from './types';
 import { clsx, type ClassValue } from 'clsx';
@@ -50,7 +51,7 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState<'CONFIRM_CASH' | 'QRIS_PAY' | null>(null);
   const [activeTransactionId, setActiveTransactionId] = useState<string | null>(null);
-  const [qrUrl, setQrUrl] = useState<string | null>(null);
+  const [qrString, setQrString] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -67,7 +68,7 @@ export default function App() {
         } catch (err) {
           console.error("Polling error", err);
         }
-      }, 3000);
+      }, 5000);
     }
     return () => clearInterval(interval);
   }, [modalType, activeTransactionId]);
@@ -85,7 +86,7 @@ export default function App() {
     };
 
     setHistory(prev => [newTx, ...prev]);
-    setNotification({ message: "Pembayaran Berhasil & Produk Dikirim", type: 'success' });
+    setNotification({ message: paymentMethod === 'CASH' ? "Transaksi Berhasil" : "Pembayaran Diterima & Produk Diproses!", type: 'success' });
     resetForm();
     setIsModalOpen(false);
     setModalType(null);
@@ -95,7 +96,7 @@ export default function App() {
     setCustomerId('');
     setSelectedDenom(null);
     setActiveTransactionId(null);
-    setQrUrl(null);
+    setQrString(null);
   };
 
   const handleProcessTransaction = async () => {
@@ -104,43 +105,61 @@ export default function App() {
       return;
     }
 
+    if (paymentMethod === 'CASH') {
+      setModalType('CONFIRM_CASH');
+      setIsModalOpen(true);
+    } else {
+      setIsProcessing(true);
+      try {
+        const res = await api.createQrisTransaction({
+          customerId,
+          product: selectedDenom
+        });
+
+        if (res.success) {
+          setActiveTransactionId(res.transactionId);
+          setQrString(res.qrString);
+          setModalType('QRIS_PAY');
+          setIsModalOpen(true);
+        }
+      } catch (err: any) {
+        setNotification({ message: err.response?.data?.message || "Gagal membuat QRIS", type: 'error' });
+      } finally {
+        setIsProcessing(false);
+      }
+    }
+  };
+
+  const handleCashConfirm = async () => {
     setIsProcessing(true);
     try {
-      const res = await api.createTransaction({
+      const res = await api.createCashTransaction({
         customerId,
-        product: selectedDenom,
-        method: paymentMethod
+        product: selectedDenom
       });
 
       if (res.success) {
         setActiveTransactionId(res.transactionId);
-        if (paymentMethod === 'CASH') {
-          setModalType('CONFIRM_CASH');
-        } else {
-          setQrUrl(res.qrUrl);
-          setModalType('QRIS_PAY');
-        }
-        setIsModalOpen(true);
+        handleTransactionSuccess();
       }
-    } catch (err) {
-      setNotification({ message: "Gagal memproses transaksi", type: 'error' });
+    } catch (err: any) {
+      setNotification({ message: err.response?.data?.message || "Gagal memproses transaksi", type: 'error' });
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleCashSelesai = async () => {
+  const checkStatusManual = async () => {
     if (!activeTransactionId) return;
-    setIsProcessing(true);
     try {
-      const res = await api.executeOrder(activeTransactionId);
-      if (res.success) {
+      const res = await api.checkStatus(activeTransactionId);
+      if (res.status === 'SUCCESS') {
         handleTransactionSuccess();
+      } else {
+        setNotification({ message: "Pembayaran belum diterima", type: 'error' });
       }
     } catch (err) {
-      setNotification({ message: "Gagal mengirim produk", type: 'error' });
-    } finally {
-      setIsProcessing(false);
+      setNotification({ message: "Gagal mengecek status", type: 'error' });
     }
   };
 
@@ -415,7 +434,7 @@ export default function App() {
                       <Wallet className="text-primary" size={32} />
                     </div>
                     <h2 className="text-2xl font-extrabold text-on-surface tracking-tight">Terima Uang Tunai?</h2>
-                    <p className="text-on-surface-variant mt-2 text-sm">Pastikan nominal yang diterima sudah sesuai.</p>
+                    <p className="text-on-surface-variant mt-2 text-sm">Apakah Anda sudah menerima uang tunai dari pelanggan?</p>
                   </div>
                   <div className="px-8 pb-8 w-full">
                     <div className="bg-surface-container-low rounded-2xl p-5 space-y-4">
@@ -436,11 +455,11 @@ export default function App() {
                   </div>
                   <div className="px-8 pb-10 w-full flex flex-col gap-3">
                     <button 
-                      onClick={handleCashSelesai}
+                      onClick={handleCashConfirm}
                       disabled={isProcessing}
                       className="w-full h-14 bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold text-lg rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
                     >
-                      {isProcessing ? <RefreshCw className="animate-spin" /> : <CheckCircle2 />} Selesai
+                      {isProcessing ? <RefreshCw className="animate-spin" /> : <CheckCircle2 />} Sudah Terima
                     </button>
                     <button onClick={() => setIsModalOpen(false)} className="w-full h-12 text-tertiary font-semibold text-sm rounded-xl">Batal</button>
                   </div>
@@ -467,8 +486,8 @@ export default function App() {
                       </h2>
                     </div>
                     <div className="relative bg-white p-4 rounded-xl shadow-inner border border-outline-variant/30">
-                      {qrUrl ? (
-                        <img className="w-56 h-56 object-contain" src={qrUrl} alt="QR Code" />
+                      {qrString ? (
+                        <QRCodeSVG value={qrString} size={224} />
                       ) : (
                         <div className="w-56 h-56 flex items-center justify-center bg-slate-100"><RefreshCw className="animate-spin" /></div>
                       )}
@@ -494,8 +513,8 @@ export default function App() {
                     <button onClick={() => setIsModalOpen(false)} className="flex items-center justify-center gap-2 px-6 py-4 rounded-full font-bold text-tertiary bg-surface-container-high">
                       <XCircle size={20} /> Batalkan
                     </button>
-                    <button onClick={handleTransactionSuccess} className="flex items-center justify-center gap-2 px-6 py-4 rounded-full font-bold text-on-primary bg-gradient-to-r from-primary to-primary-container shadow-lg">
-                      <CheckCircle2 size={20} /> Selesai
+                    <button onClick={checkStatusManual} className="flex items-center justify-center gap-2 px-6 py-4 rounded-full font-bold text-on-primary bg-gradient-to-r from-primary to-primary-container shadow-lg">
+                      <RefreshCw size={20} /> Cek Status
                     </button>
                   </div>
                 </>
