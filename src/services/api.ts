@@ -12,5 +12,13 @@ export const api = {
   checkStatus: async (transactionId: string) => {
     const response = await axios.get(`/api/transaction/status/${transactionId}`);
     return response.data;
+  },
+  simulateSuccess: async (transactionId: string) => {
+    const response = await axios.post(`/api/transaction/simulate-success/${transactionId}`);
+    return response.data;
+  },
+  getSupplierBalance: async () => {
+    const response = await axios.get('/api/supplier/balance');
+    return response.data;
   }
 };

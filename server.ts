@@ -120,39 +120,19 @@ async function startServer() {
     const transactionId = req.params.id;
     const transaction = transactions[transactionId];
 
-    if (!transaction) return res.status(404).json({ message: "Transaksi tidak ditemukan" });
+    if (!transaction) {
+      console.log(`Status Check: Transaction ${transactionId} not found`);
+      return res.status(404).json({ message: "Transaksi tidak ditemukan" });
+    }
 
     // If already success, just return
     if (transaction.status === "SUCCESS") return res.json({ status: "SUCCESS" });
 
     try {
-      // In real scenario, call Duitku Check Status API
-      // const merchantCode = process.env.DUITKU_MERCHANT_CODE;
-      // const apiKey = process.env.DUITKU_API_KEY;
-      // const signature = crypto.createHash('md5').update(merchantCode + transactionId + apiKey).digest('hex');
-      // const response = await axios.post('https://sandbox.duitku.com/webapi/api/merchant/v2/checkstatus', { merchantCode, merchantOrderId: transactionId, signature });
-      
       // For Demo: Simulate payment success after 15 seconds
       const elapsed = (Date.now() - new Date(transaction.timestamp).getTime()) / 1000;
       if (elapsed > 15 && transaction.status === "PENDING") {
-        console.log(`Payment detected for ${transactionId}. Executing Digiflazz...`);
-        
-        // Execute Digiflazz
-        const username = process.env.DIGIFLAZZ_USERNAME || "dummy_sementara";
-        const apiKey = process.env.DIGIFLAZZ_API_KEY || "dummy_sementara";
-        const sign = crypto.createHash('md5').update(`${username}${apiKey}${transactionId}`).digest('hex');
-
-        const digiPayload = {
-          username,
-          buyer_sku_code: transaction.product.id,
-          customer_no: transaction.customerId,
-          ref_id: transactionId,
-          sign: sign
-        };
-        
-        console.log("Executing Digiflazz (QRIS PAID):", digiPayload);
-        // await axios.post('https://api.digiflazz.com/v1/transaction', digiPayload);
-
+        console.log(`Auto-Simulating Payment success for ${transactionId} after 15s`);
         transaction.status = "SUCCESS";
       }
 
@@ -162,7 +142,41 @@ async function startServer() {
     }
   });
 
-  // 4. Duitku Webhook (Real-world use)
+  // 4. Force Success (For Testing)
+  app.post("/api/transaction/simulate-success/:id", (req, res) => {
+    const transactionId = req.params.id;
+    const transaction = transactions[transactionId];
+
+    if (!transaction) return res.status(404).json({ message: "Not found" });
+
+    console.log(`Manual Simulation: Forcing SUCCESS for ${transactionId}`);
+    transaction.status = "SUCCESS";
+    res.json({ success: true, status: "SUCCESS" });
+  });
+
+  // 5. Digiflazz Balance
+  app.get("/api/supplier/balance", async (req, res) => {
+    try {
+      const username = process.env.DIGIFLAZZ_USERNAME || "dummy_sementara";
+      const apiKey = process.env.DIGIFLAZZ_API_KEY || "dummy_sementara";
+      const sign = crypto.createHash('md5').update(`${username}${apiKey}depo`).digest('hex');
+
+      const payload = {
+        username,
+        key: apiKey,
+        sign: sign
+      };
+
+      console.log("Checking Digiflazz Balance with:", payload);
+      // In real scenario: const response = await axios.post('https://api.digiflazz.com/v1/cek-saldo', payload);
+      
+      return res.json({ success: true, balance: 1250000 }); // Mock balance
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: "Gagal cek saldo" });
+    }
+  });
+
+  // 6. Duitku Webhook (Real-world use)
   app.post("/api/webhooks/duitku", async (req, res) => {
     const { merchantCode, amount, merchantOrderId, signature, resultCode } = req.body;
     const apiKey = process.env.DUITKU_API_KEY || "9b9b83b59d344945500389e2759bc010";
@@ -187,13 +201,6 @@ async function startServer() {
     }
 
     res.send("OK");
-  });
-
-  // 4. Polling Status (For frontend)
-  app.get("/api/transactions/status/:id", (req, res) => {
-    const transaction = transactions[req.params.id];
-    if (!transaction) return res.status(404).json({ message: "Not found" });
-    res.json({ status: transaction.status });
   });
 
   // Vite middleware for development

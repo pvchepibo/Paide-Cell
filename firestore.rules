@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: inventory
+    // Fields: sku, name, category, costPrice, sellingPrice, isActive
+    //
+    // Collection: transactions
+    // Fields: transactionId, timestamp, productId, productName, customerId, costPrice, sellingPrice, profit, paymentMethod, status
+    //
+    // Collection: settings
+    // Document ID: config
+    // Fields: storeName, logoUrl, duitkuMerchantCode, duitkuApiKey, digiflazzUsername, digiflazzApiKey
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "agusthinuspaide@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidProduct(data) {
+      return data.sku is string && data.sku.size() > 0 &&
+             data.name is string && data.name.size() > 0 &&
+             data.category is string &&
+             data.costPrice is number &&
+             data.sellingPrice is number &&
+             data.isActive is bool;
+    }
+
+    function isValidTransaction(data) {
+      return data.transactionId is string &&
+             data.productId is string &&
+             data.costPrice is number &&
+             data.sellingPrice is number &&
+             data.status in ['SUCCESS', 'PENDING', 'FAILED'];
+    }
+
+    // Rules
+    match /inventory/{productId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidProduct(request.resource.data);
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
+      allow update: if isAdmin() && isValidTransaction(request.resource.data);
+    }
+
+    match /settings/config {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Digital product information for inventory management",
+      "type": "object",
+      "properties": {
+        "sku": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "costPrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["sku", "name", "category", "costPrice", "sellingPrice", "isActive"]
+    },
+    "TransactionRecord": {
+      "title": "Transaction Record",
+      "description": "Detailed record of a transaction for reporting",
+      "type": "object",
+      "properties": {
+        "transactionId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "customerId": { "type": "string" },
+        "costPrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "profit": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["CASH", "QRIS"] },
+        "status": { "type": "string", "enum": ["SUCCESS", "PENDING", "FAILED"] }
+      },
+      "required": ["transactionId", "timestamp", "productId", "customerId", "costPrice", "sellingPrice", "profit", "paymentMethod", "status"]
+    },
+    "AppSettings": {
+      "title": "App Settings",
+      "description": "Global application settings and integration keys",
+      "type": "object",
+      "properties": {
+        "storeName": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "duitkuMerchantCode": { "type": "string" },
+        "duitkuApiKey": { "type": "string" },
+        "digiflazzUsername": { "type": "string" },
+        "digiflazzApiKey": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/inventory/{productId}": {
+      "schema": "Product",
+      "description": "Collection of digital products and their pricing"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "TransactionRecord",
+      "description": "Collection of all completed or pending transactions"
+    },
+    "/settings/config": {
+      "schema": "AppSettings",
+      "description": "Global settings document"
+    }
+  }
+}
