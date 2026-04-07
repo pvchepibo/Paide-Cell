@@ -77,42 +77,94 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<Tab>('DASHBOARD');
   const [customerId, setCustomerId] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<Category>('PULSA');
-  const [selectedDenom, setSelectedDenom] = useState<Denomination | null>(null);
+  const [selectedDenom, setSelectedDenom] = useState<any | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'QRIS'>('CASH');
   const [history, setHistory] = useState<Transaction[]>([]);
+  const [inventory, setInventory] = useState<any[]>([]);
+  const [reportsData, setReportsData] = useState<{ summary: any; transactions: any[] }>({ summary: {}, transactions: [] });
   
   // Modal States
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalType, setModalType] = useState<'CONFIRM_CASH' | 'QRIS_PAY' | null>(null);
+  const [modalType, setModalType] = useState<'CONFIRM_CASH' | 'QRIS_PAY' | 'ADD_PRODUCT' | 'CONFIRM_DELETE' | null>(null);
   const [activeTransactionId, setActiveTransactionId] = useState<string | null>(null);
+  const [productToDelete, setProductToDelete] = useState<string | null>(null);
   const [qrString, setQrString] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [balance, setBalance] = useState<number>(0);
 
+  // New Product State
+  const [newProduct, setNewProduct] = useState({
+    sku: '',
+    name: '',
+    category: 'PULSA',
+    costPrice: 0,
+    sellingPrice: 0,
+    isActive: true
+  });
+
   // Settings State
   const [storeSettings, setStoreSettings] = useState({
-    name: 'GPDPB Marturia Abasi',
+    storeName: 'GPDPB Marturia Abasi',
     logoUrl: 'https://picsum.photos/seed/store/200',
-    duitkuMerchantCode: 'DS29393',
-    duitkuApiKey: '9b9b83b59d344945500389e2759bc010',
+    duitkuMerchantCode: '',
+    duitkuApiKey: '',
     digiflazzUsername: '',
     digiflazzApiKey: ''
   });
   const [showApiKeys, setShowApiKeys] = useState(false);
 
-  // Fetch Balance
+  // Initial Data Fetch
   useEffect(() => {
-    const fetchBalance = async () => {
+    const initApp = async () => {
+      setIsLoading(true);
       try {
-        const res = await api.getSupplierBalance();
-        if (res.success) setBalance(res.balance);
-      } catch (err) {
-        console.error("Failed to fetch balance", err);
+        const [settingsRes, inventoryRes, balanceRes] = await Promise.all([
+          api.getSettings(),
+          api.getInventory(),
+          api.getSupplierBalance()
+        ]);
+        
+        if (settingsRes) setStoreSettings(settingsRes);
+        if (inventoryRes) setInventory(inventoryRes);
+        if (balanceRes.success) setBalance(balanceRes.balance);
+      } catch (err: any) {
+        console.error("Initialization error", err);
+        setNotification({ message: `Initialization error: ${err.message}`, type: 'error' });
+      } finally {
+        setIsLoading(false);
       }
     };
-    fetchBalance();
+    initApp();
   }, []);
+
+  // Fetch Reports when tab changes
+  useEffect(() => {
+    if (currentTab === 'REPORTS') {
+      const fetchReports = async () => {
+        setIsLoading(true);
+        try {
+          const res = await api.getReports();
+          setReportsData(res);
+        } catch (err) {
+          console.error("Failed to fetch reports", err);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      fetchReports();
+    }
+  }, [currentTab]);
+
+  const refreshInventory = async () => {
+    try {
+      const res = await api.getInventory();
+      setInventory(res);
+    } catch (err) {
+      console.error("Failed to refresh inventory", err);
+    }
+  };
 
   const resetForm = useCallback(() => {
     setCustomerId('');
@@ -248,12 +300,89 @@ export default function App() {
     }
   };
 
+  const handleSaveSettings = async () => {
+    setIsProcessing(true);
+    try {
+      await api.updateSettings(storeSettings);
+      setNotification({ message: "Settings saved successfully", type: 'success' });
+    } catch (err) {
+      setNotification({ message: "Failed to save settings", type: 'error' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleAddProduct = async () => {
+    setIsProcessing(true);
+    try {
+      await api.addInventory(newProduct);
+      await refreshInventory();
+      setIsModalOpen(false);
+      setNotification({ message: "Product added", type: 'success' });
+      setNewProduct({ sku: '', name: '', category: 'PULSA', costPrice: 0, sellingPrice: 0, isActive: true });
+    } catch (err) {
+      setNotification({ message: "Failed to add product", type: 'error' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleUpdatePrice = async (sku: string, price: number) => {
+    try {
+      await api.updateInventory(sku, { sellingPrice: price });
+      await refreshInventory();
+      setNotification({ message: "Price updated", type: 'success' });
+    } catch (err) {
+      setNotification({ message: "Failed to update price", type: 'error' });
+    }
+  };
+
+  const handleDeleteProduct = async (sku: string) => {
+    setProductToDelete(sku);
+    setModalType('CONFIRM_DELETE');
+    setIsModalOpen(true);
+  };
+
+  const confirmDeleteProduct = async () => {
+    if (!productToDelete) return;
+    setIsProcessing(true);
+    try {
+      await api.deleteInventory(productToDelete);
+      await refreshInventory();
+      setNotification({ message: "Product deleted", type: 'success' });
+      setIsModalOpen(false);
+      setModalType(null);
+      setProductToDelete(null);
+    } catch (err) {
+      setNotification({ message: "Failed to delete product", type: 'error' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleToggleStatus = async (sku: string, currentStatus: boolean) => {
+    try {
+      await api.updateInventory(sku, { isActive: !currentStatus });
+      await refreshInventory();
+    } catch (err) {
+      setNotification({ message: "Failed to update status", type: 'error' });
+    }
+  };
+
   return (
     <div className="bg-surface text-on-surface overflow-hidden h-screen flex flex-col font-body">
+      {isLoading && (
+        <div className="fixed inset-0 bg-white/50 backdrop-blur-sm z-[100] flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <RefreshCw className="animate-spin text-primary" size={48} />
+            <p className="font-bold text-primary">Loading Data...</p>
+          </div>
+        </div>
+      )}
       {/* TopNavBar */}
       <header className="fixed top-0 w-full flex justify-between items-center px-6 h-16 bg-slate-50/80 backdrop-blur-md shadow-sm z-50">
         <div className="flex items-center gap-4">
-          <span className="text-xl font-extrabold tracking-tight text-teal-950 font-headline">{storeSettings.name}</span>
+          <span className="text-xl font-extrabold tracking-tight text-teal-950 font-headline">{storeSettings.storeName}</span>
           <nav className="hidden md:flex ml-10 space-x-8">
             <button 
               onClick={() => setCurrentTab('DASHBOARD')}
@@ -425,27 +554,24 @@ export default function App() {
                   <div>
                     <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4">Select Denomination</h3>
                     <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-                      {DENOMINATIONS.filter(d => d.category === selectedCategory).map((denom) => (
+                      {(Array.isArray(inventory) ? inventory : [])
+                        .filter(d => d.category === selectedCategory && d.isActive)
+                        .map((denom) => (
                         <button 
-                          key={denom.id}
+                          key={denom.sku}
                           onClick={() => setSelectedDenom(denom)}
                           className={cn(
                             "group flex flex-col items-start p-6 rounded-xl transition-all border border-transparent",
-                            selectedDenom?.id === denom.id 
+                            selectedDenom?.sku === denom.sku 
                               ? "bg-primary-fixed ring-2 ring-primary" 
                               : "bg-surface-container-lowest hover:bg-primary-fixed hover:border-surface-tint"
                           )}
                         >
                           <span className="text-xs font-bold text-on-surface-variant uppercase">{denom.category} REGULER</span>
-                          <span className="text-2xl font-extrabold text-primary">{denom.amount.toLocaleString()}</span>
-                          <span className="text-sm font-semibold text-on-surface-variant mt-2">Rp {denom.price.toLocaleString()}</span>
+                          <span className="text-2xl font-extrabold text-primary">{denom.name.replace(/[^0-9]/g, '')}</span>
+                          <span className="text-sm font-semibold text-on-surface-variant mt-2">Rp {denom.sellingPrice.toLocaleString()}</span>
                         </button>
                       ))}
-                      <div className="flex items-center justify-center p-6 bg-surface-container-high rounded-xl border border-dashed border-outline-variant">
-                        <button className="text-on-surface-variant font-bold text-sm hover:text-primary transition-colors flex items-center gap-1">
-                          <Plus size={18} /> Custom Amt
-                        </button>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -472,7 +598,7 @@ export default function App() {
                         <div className="border-t border-dashed border-outline-variant py-4 mt-4">
                           <div className="flex justify-between items-end">
                             <span className="text-xs font-bold text-on-surface-variant uppercase">Total Tagihan</span>
-                            <span className="text-3xl font-extrabold text-primary tracking-tighter">Rp {selectedDenom.price.toLocaleString()}</span>
+                            <span className="text-3xl font-extrabold text-primary tracking-tighter">Rp {selectedDenom.sellingPrice.toLocaleString()}</span>
                           </div>
                         </div>
                       </div>
@@ -533,9 +659,9 @@ export default function App() {
                         <div key={tx.id} className="p-3 bg-surface-container-lowest rounded-lg border-l-4 border-primary flex justify-between items-center">
                           <div>
                             <p className="text-sm font-bold text-on-surface">{tx.productName}</p>
-                            <p className="text-[10px] font-semibold text-on-surface-variant">{tx.timestamp} • {tx.status}</p>
+                            <p className="text-[10px] font-semibold text-on-surface-variant">{tx.time} • {tx.status}</p>
                           </div>
-                          <span className="text-sm font-bold text-primary">Rp {tx.price.toLocaleString()}</span>
+                          <span className="text-sm font-bold text-primary">Rp {tx.sellingPrice.toLocaleString()}</span>
                         </div>
                       ))}
                     </div>
@@ -565,13 +691,16 @@ export default function App() {
                     <p className="text-on-surface-variant font-medium">Manage your digital products and margins</p>
                   </div>
                   <div className="flex gap-3">
+                    <button 
+                      onClick={() => { setModalType('ADD_PRODUCT'); setIsModalOpen(true); }}
+                      className="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-lg text-sm font-bold shadow-lg hover:shadow-primary/20 transition-all"
+                    >
+                      <Plus size={18} /> Add Product
+                    </button>
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" size={18} />
                       <input type="text" placeholder="Search product..." className="pl-10 pr-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg text-sm focus:ring-2 focus:ring-primary outline-none" />
                     </div>
-                    <button className="flex items-center gap-2 px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg text-sm font-bold text-on-surface-variant hover:bg-surface-container-high transition-colors">
-                      <Filter size={18} /> Filter
-                    </button>
                   </div>
                 </header>
 
@@ -586,10 +715,11 @@ export default function App() {
                         <th className="px-6 py-4 text-xs font-bold text-on-surface-variant uppercase tracking-widest">Selling Price</th>
                         <th className="px-6 py-4 text-xs font-bold text-on-surface-variant uppercase tracking-widest">Margin</th>
                         <th className="px-6 py-4 text-xs font-bold text-on-surface-variant uppercase tracking-widest">Status</th>
+                        <th className="px-6 py-4 text-xs font-bold text-on-surface-variant uppercase tracking-widest">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-outline-variant/5">
-                      {MOCK_INVENTORY.map((item) => (
+                      {inventory.map((item) => (
                         <tr key={item.sku} className="hover:bg-surface-container-low transition-colors group">
                           <td className="px-6 py-4 font-mono text-xs font-bold text-primary">{item.sku}</td>
                           <td className="px-6 py-4 font-bold text-on-surface">{item.name}</td>
@@ -603,6 +733,7 @@ export default function App() {
                               <input 
                                 type="number" 
                                 defaultValue={item.sellingPrice} 
+                                onBlur={(e) => handleUpdatePrice(item.sku, parseInt(e.target.value))}
                                 className="w-24 bg-surface-container-high border-none rounded px-2 py-1 text-sm font-bold focus:ring-2 focus:ring-primary outline-none"
                               />
                             </div>
@@ -611,14 +742,24 @@ export default function App() {
                             <span className="text-sm font-bold text-teal-600">Rp {(item.sellingPrice - item.costPrice).toLocaleString()}</span>
                           </td>
                           <td className="px-6 py-4">
-                            <button className={cn(
-                              "w-10 h-5 rounded-full relative transition-colors",
-                              item.isActive ? "bg-teal-500" : "bg-slate-300"
-                            )}>
+                            <button 
+                              onClick={() => handleToggleStatus(item.sku, item.isActive)}
+                              className={cn(
+                                "w-10 h-5 rounded-full relative transition-colors",
+                                item.isActive ? "bg-teal-500" : "bg-slate-300"
+                              )}>
                               <div className={cn(
                                 "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
                                 item.isActive ? "right-1" : "left-1"
                               )}></div>
+                            </button>
+                          </td>
+                          <td className="px-6 py-4">
+                            <button 
+                              onClick={() => handleDeleteProduct(item.sku)}
+                              className="p-2 text-error hover:bg-error/10 rounded-lg transition-colors"
+                            >
+                              <Trash2 size={18} />
                             </button>
                           </td>
                         </tr>
@@ -650,26 +791,23 @@ export default function App() {
                   <div className="bg-surface-container-lowest p-6 rounded-2xl shadow-sm border border-outline-variant/10">
                     <div className="flex justify-between items-start mb-4">
                       <div className="p-3 bg-teal-50 text-teal-600 rounded-xl"><TrendingUp size={24} /></div>
-                      <span className="text-[10px] font-bold text-teal-600 bg-teal-50 px-2 py-1 rounded-full">+12.5%</span>
                     </div>
                     <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Total Revenue</p>
-                    <h3 className="text-2xl font-black text-on-surface mt-1">Rp 4.250.000</h3>
+                    <h3 className="text-2xl font-black text-on-surface mt-1">Rp {reportsData.summary.totalRevenue?.toLocaleString() || 0}</h3>
                   </div>
                   <div className="bg-surface-container-lowest p-6 rounded-2xl shadow-sm border border-outline-variant/10">
                     <div className="flex justify-between items-start mb-4">
                       <div className="p-3 bg-primary-container/10 text-primary rounded-xl"><DollarSign size={24} /></div>
-                      <span className="text-[10px] font-bold text-primary bg-primary-container/10 px-2 py-1 rounded-full">+8.2%</span>
                     </div>
                     <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Gross Profit</p>
-                    <h3 className="text-2xl font-black text-on-surface mt-1">Rp 845.000</h3>
+                    <h3 className="text-2xl font-black text-on-surface mt-1">Rp {reportsData.summary.grossProfit?.toLocaleString() || 0}</h3>
                   </div>
                   <div className="bg-surface-container-lowest p-6 rounded-2xl shadow-sm border border-outline-variant/10">
                     <div className="flex justify-between items-start mb-4">
                       <div className="p-3 bg-secondary-container/10 text-secondary rounded-xl"><ShoppingCart size={24} /></div>
-                      <span className="text-[10px] font-bold text-secondary bg-secondary-container/10 px-2 py-1 rounded-full">142 Tx</span>
                     </div>
                     <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Successful Tx</p>
-                    <h3 className="text-2xl font-black text-on-surface mt-1">128</h3>
+                    <h3 className="text-2xl font-black text-on-surface mt-1">{reportsData.summary.successfulTx || 0}</h3>
                   </div>
                 </div>
 
@@ -677,10 +815,6 @@ export default function App() {
                 <div className="bg-surface-container-lowest rounded-2xl shadow-sm border border-outline-variant/10 overflow-hidden">
                   <div className="px-6 py-4 border-b border-outline-variant/10 flex justify-between items-center">
                     <h3 className="font-bold text-on-surface">Recent Transactions</h3>
-                    <div className="flex gap-2">
-                      <button className="px-3 py-1.5 text-xs font-bold bg-surface-container-high rounded-md">Today</button>
-                      <button className="px-3 py-1.5 text-xs font-bold text-on-surface-variant hover:bg-surface-container-high rounded-md">This Week</button>
-                    </div>
                   </div>
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -695,12 +829,12 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-outline-variant/5">
-                      {MOCK_REPORTS.map((tx) => (
+                      {reportsData.transactions.map((tx) => (
                         <tr key={tx.id} className="hover:bg-surface-container-low transition-colors">
                           <td className="px-6 py-4 text-xs font-bold text-on-surface-variant">{tx.time}</td>
-                          <td className="px-6 py-4 font-bold text-on-surface">{tx.product}</td>
-                          <td className="px-6 py-4 font-mono text-xs text-on-surface-variant">{tx.target}</td>
-                          <td className="px-6 py-4 font-bold text-on-surface">Rp {tx.sell.toLocaleString()}</td>
+                          <td className="px-6 py-4 font-bold text-on-surface">{tx.productName}</td>
+                          <td className="px-6 py-4 font-mono text-xs text-on-surface-variant">{tx.customerId}</td>
+                          <td className="px-6 py-4 font-bold text-on-surface">Rp {tx.sellingPrice.toLocaleString()}</td>
                           <td className="px-6 py-4 font-bold text-teal-600">Rp {tx.profit.toLocaleString()}</td>
                           <td className="px-6 py-4">
                             <span className="px-2 py-1 bg-surface-container-high text-on-surface-variant text-[10px] font-black rounded uppercase">{tx.method}</span>
@@ -739,8 +873,8 @@ export default function App() {
                         <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Store Name</label>
                         <input 
                           type="text" 
-                          value={storeSettings.name}
-                          onChange={(e) => setStoreSettings({...storeSettings, name: e.target.value})}
+                          value={storeSettings.storeName}
+                          onChange={(e) => setStoreSettings({...storeSettings, storeName: e.target.value})}
                           className="w-full bg-surface-container-high border-none rounded-xl py-3 px-4 font-bold focus:ring-2 focus:ring-primary outline-none"
                         />
                       </div>
@@ -754,8 +888,13 @@ export default function App() {
                         />
                       </div>
                       <div className="pt-4">
-                        <button className="w-full py-3 bg-primary text-on-primary rounded-xl font-bold shadow-lg flex items-center justify-center gap-2">
-                          <Save size={18} /> Save Profile
+                        <button 
+                          onClick={handleSaveSettings}
+                          disabled={isProcessing}
+                          className="w-full py-3 bg-primary text-on-primary rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                          {isProcessing ? <RefreshCw className="animate-spin" size={18} /> : <Save size={18} />}
+                          Save Profile
                         </button>
                       </div>
                     </div>
@@ -780,7 +919,7 @@ export default function App() {
                         <input 
                           type="text" 
                           value={storeSettings.duitkuMerchantCode}
-                          readOnly
+                          onChange={(e) => setStoreSettings({...storeSettings, duitkuMerchantCode: e.target.value})}
                           className="w-full bg-surface-container-high border-none rounded-xl py-3 px-4 font-mono text-sm focus:ring-2 focus:ring-primary outline-none"
                         />
                       </div>
@@ -789,7 +928,7 @@ export default function App() {
                         <input 
                           type={showApiKeys ? "text" : "password"} 
                           value={storeSettings.duitkuApiKey}
-                          readOnly
+                          onChange={(e) => setStoreSettings({...storeSettings, duitkuApiKey: e.target.value})}
                           className="w-full bg-surface-container-high border-none rounded-xl py-3 px-4 font-mono text-sm focus:ring-2 focus:ring-primary outline-none"
                         />
                       </div>
@@ -797,17 +936,31 @@ export default function App() {
                         <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Digiflazz Username</label>
                         <input 
                           type="text" 
-                          placeholder="Enter username"
+                          value={storeSettings.digiflazzUsername}
+                          onChange={(e) => setStoreSettings({...storeSettings, digiflazzUsername: e.target.value})}
                           className="w-full bg-surface-container-high border-none rounded-xl py-3 px-4 font-mono text-sm focus:ring-2 focus:ring-primary outline-none"
+                          placeholder="Enter username"
                         />
                       </div>
                       <div>
                         <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Digiflazz API Key</label>
                         <input 
                           type={showApiKeys ? "text" : "password"} 
-                          placeholder="Enter API key"
+                          value={storeSettings.digiflazzApiKey}
+                          onChange={(e) => setStoreSettings({...storeSettings, digiflazzApiKey: e.target.value})}
                           className="w-full bg-surface-container-high border-none rounded-xl py-3 px-4 font-mono text-sm focus:ring-2 focus:ring-primary outline-none"
+                          placeholder="Enter API Key"
                         />
+                      </div>
+                      <div className="pt-4">
+                        <button 
+                          onClick={handleSaveSettings}
+                          disabled={isProcessing}
+                          className="w-full py-3 bg-primary text-on-primary rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                          {isProcessing ? <RefreshCw className="animate-spin" size={18} /> : <Save size={18} />}
+                          Save API Keys
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -821,107 +974,186 @@ export default function App() {
       {/* Modals */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-on-background/60 backdrop-blur-sm px-4">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-surface-container-lowest w-full max-w-lg rounded-[2rem] overflow-hidden shadow-2xl flex flex-col items-center relative"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => !isProcessing && setIsModalOpen(false)}
+              className="absolute inset-0 bg-teal-950/40 backdrop-blur-sm"
+            />
+            
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden"
             >
               {modalType === 'CONFIRM_CASH' && (
-                <>
-                  <div className="pt-10 px-8 pb-6 text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-container/10 rounded-full mb-6">
-                      <Wallet className="text-primary" size={32} />
-                    </div>
-                    <h2 className="text-2xl font-extrabold text-on-surface tracking-tight">Terima Uang Tunai?</h2>
-                    <p className="text-on-surface-variant mt-2 text-sm">Apakah Anda sudah menerima uang tunai dari pelanggan?</p>
+                <div className="p-8 text-center space-y-6">
+                  <div className="w-20 h-20 bg-teal-100 text-teal-600 rounded-full flex items-center justify-center mx-auto">
+                    <Wallet size={40} />
                   </div>
-                  <div className="px-8 pb-8 w-full">
-                    <div className="bg-surface-container-low rounded-2xl p-5 space-y-4">
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1 pr-4">
-                          <h3 className="text-sm font-bold text-on-surface leading-snug">{selectedDenom?.name}</h3>
-                          <p className="text-xs text-on-surface-variant mt-0.5">ID: {customerId}</p>
-                        </div>
-                        <div className="text-sm font-bold text-on-surface">1x</div>
-                      </div>
-                      <div className="pt-4 border-t border-outline-variant/30">
-                        <div className="flex justify-between items-baseline">
-                          <span className="text-xs font-semibold text-on-surface-variant">Total Tagihan</span>
-                          <span className="text-2xl font-extrabold text-primary tracking-tighter">Rp {selectedDenom?.price.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    </div>
+                  <div>
+                    <h2 className="text-2xl font-black text-teal-950">Konfirmasi Tunai</h2>
+                    <p className="text-slate-500 font-medium mt-2">Apakah Anda sudah menerima uang tunai dari pelanggan sebesar <span className="text-teal-700 font-bold">Rp {selectedDenom?.sellingPrice.toLocaleString()}</span>?</p>
                   </div>
-                  <div className="px-8 pb-10 w-full flex flex-col gap-3">
+                  <div className="flex gap-3 pt-4">
+                    <button 
+                      onClick={() => setIsModalOpen(false)}
+                      className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+                    >
+                      Belum
+                    </button>
                     <button 
                       onClick={handleCashConfirm}
                       disabled={isProcessing}
-                      className="w-full h-14 bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold text-lg rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="flex-1 py-4 bg-teal-600 text-white rounded-2xl font-bold shadow-lg shadow-teal-600/20 hover:bg-teal-700 transition-all flex items-center justify-center gap-2"
                     >
-                      {isProcessing ? <RefreshCw className="animate-spin" /> : <CheckCircle2 />} Sudah Terima
+                      {isProcessing ? <RefreshCw className="animate-spin" size={20} /> : <CheckCircle2 size={20} />}
+                      Sudah, Proses!
                     </button>
-                    <button onClick={() => setIsModalOpen(false)} className="w-full h-12 text-tertiary font-semibold text-sm rounded-xl">Batal</button>
                   </div>
-                </>
+                </div>
               )}
 
               {modalType === 'QRIS_PAY' && (
-                <>
-                  <div className="w-full bg-primary py-4 px-8 flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <QrCode className="text-primary-fixed" size={20} />
-                      <span className="text-on-primary font-bold tracking-wide">QRIS DYNAMIC PAYMENT</span>
-                    </div>
-                    <div className="flex items-center gap-2 px-3 py-1 bg-primary-container rounded-full border border-on-primary-container/20">
-                      <div className="w-2 h-2 rounded-full bg-primary-fixed animate-pulse"></div>
-                      <span className="text-[10px] text-on-primary-container font-bold uppercase tracking-widest">Live Sync</span>
-                    </div>
+                <div className="p-8 text-center space-y-6">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-black text-teal-600 tracking-widest uppercase">QRIS Payment</span>
+                    <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X size={20} /></button>
                   </div>
-                  <div className="w-full p-8 flex flex-col items-center text-center">
-                    <div className="mb-6">
-                      <p className="text-on-surface-variant font-medium text-sm mb-1">Total Bayar</p>
-                      <h2 className="text-4xl font-extrabold text-primary tracking-tight">
-                        <span className="text-2xl font-bold opacity-50 mr-1">Rp</span>{selectedDenom?.price.toLocaleString()}
-                      </h2>
-                    </div>
-                    <div className="relative bg-white p-4 rounded-xl shadow-inner border border-outline-variant/30">
-                      {qrString ? (
-                        <QRCodeSVG value={qrString} size={224} />
-                      ) : (
-                        <div className="w-56 h-56 flex items-center justify-center bg-slate-100"><RefreshCw className="animate-spin" /></div>
-                      )}
-                    </div>
-                    <div className="mt-8 w-full max-w-xs">
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="flex items-center gap-2 px-4 py-2 bg-tertiary-fixed text-on-tertiary-fixed rounded-full font-bold text-lg">
-                          <Timer size={18} /> <span>04:59</span>
-                        </div>
-                        <p className="text-[10px] uppercase tracking-widest text-on-surface-variant font-semibold">Batas Waktu Pembayaran</p>
+                  <div className="bg-white p-4 rounded-2xl border-2 border-teal-50 inline-block shadow-inner">
+                    {qrString ? (
+                      <QRCodeSVG value={qrString} size={240} level="H" includeMargin={true} />
+                    ) : (
+                      <div className="w-[240px] h-[240px] flex items-center justify-center bg-slate-50 rounded-xl">
+                        <RefreshCw className="animate-spin text-teal-200" size={48} />
                       </div>
-                      <div className="mt-8 p-4 bg-surface-container-low rounded-full border border-surface-variant flex items-center justify-center gap-3">
-                        <div className="flex gap-1">
-                          <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
-                          <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                          <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
-                        </div>
-                        <span className="text-sm font-semibold text-on-surface-variant">Menunggu Pelanggan Scan...</span>
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-teal-950">Rp {selectedDenom?.sellingPrice.toLocaleString()}</h3>
+                    <p className="text-sm text-slate-500 font-medium mt-1">Silakan scan kode QR di atas untuk membayar</p>
+                  </div>
+                  <div className="bg-teal-50 p-4 rounded-2xl flex items-center gap-3">
+                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-teal-600 shadow-sm">
+                      <Timer size={20} className="animate-pulse" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-[10px] font-black text-teal-600 uppercase tracking-wider">Status</p>
+                      <p className="text-sm font-bold text-teal-900">Menunggu Pembayaran...</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button onClick={checkStatusManual} className="py-3 bg-slate-100 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-200 transition-all">Cek Status</button>
+                    <button onClick={handleSimulateSuccess} className="py-3 bg-teal-50 text-teal-700 rounded-xl font-bold text-sm hover:bg-teal-100 transition-all">Simulasi Bayar (Demo)</button>
+                  </div>
+                </div>
+              )}
+
+              {modalType === 'ADD_PRODUCT' && (
+                <div className="p-8 space-y-6">
+                  <div className="flex justify-between items-center">
+                    <h2 className="text-2xl font-black text-teal-950">Add New Product</h2>
+                    <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X size={20} /></button>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">SKU Code</label>
+                      <input 
+                        type="text" 
+                        value={newProduct.sku}
+                        onChange={(e) => setNewProduct({...newProduct, sku: e.target.value})}
+                        className="w-full bg-slate-50 border-none rounded-xl py-3 px-4 font-bold focus:ring-2 focus:ring-primary outline-none"
+                        placeholder="e.g. PULSA10"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Product Name</label>
+                      <input 
+                        type="text" 
+                        value={newProduct.name}
+                        onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
+                        className="w-full bg-slate-50 border-none rounded-xl py-3 px-4 font-bold focus:ring-2 focus:ring-primary outline-none"
+                        placeholder="e.g. Pulsa 10.000"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Category</label>
+                      <select 
+                        value={newProduct.category}
+                        onChange={(e) => setNewProduct({...newProduct, category: e.target.value})}
+                        className="w-full bg-slate-50 border-none rounded-xl py-3 px-4 font-bold focus:ring-2 focus:ring-primary outline-none"
+                      >
+                        <option value="PULSA">PULSA</option>
+                        <option value="DATA">DATA</option>
+                        <option value="TOKEN">TOKEN</option>
+                        <option value="GAME">GAME</option>
+                        <option value="E-WALLET">E-WALLET</option>
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Cost Price</label>
+                        <input 
+                          type="number" 
+                          value={newProduct.costPrice}
+                          onChange={(e) => setNewProduct({...newProduct, costPrice: parseInt(e.target.value)})}
+                          className="w-full bg-slate-50 border-none rounded-xl py-3 px-4 font-bold focus:ring-2 focus:ring-primary outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Selling Price</label>
+                        <input 
+                          type="number" 
+                          value={newProduct.sellingPrice}
+                          onChange={(e) => setNewProduct({...newProduct, sellingPrice: parseInt(e.target.value)})}
+                          className="w-full bg-slate-50 border-none rounded-xl py-3 px-4 font-bold focus:ring-2 focus:ring-primary outline-none"
+                        />
                       </div>
                     </div>
                   </div>
-                  <div className="w-full grid grid-cols-2 gap-4 px-8 pb-4">
-                    <button onClick={handleSimulateSuccess} className="col-span-2 flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-bold text-primary bg-primary/10 border border-primary/20 hover:bg-primary/20 transition-colors">
-                      <Zap size={18} /> Simulasi Bayar (Demo)
+                  <button 
+                    onClick={handleAddProduct}
+                    disabled={isProcessing}
+                    className="w-full py-4 bg-primary text-on-primary rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isProcessing ? <RefreshCw className="animate-spin" size={20} /> : <Save size={20} />}
+                    Save Product
+                  </button>
+                </div>
+              )}
+
+              {modalType === 'CONFIRM_DELETE' && (
+                <div className="p-8 text-center space-y-6">
+                  <div className="w-20 h-20 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto">
+                    <Trash2 size={40} />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-black text-teal-950">Hapus Produk?</h2>
+                    <p className="text-slate-500 font-medium mt-2">Apakah Anda yakin ingin menghapus produk <span className="text-red-600 font-bold">{productToDelete}</span>? Tindakan ini tidak dapat dibatalkan.</p>
+                  </div>
+                  <div className="flex gap-3 pt-4">
+                    <button 
+                      onClick={() => {
+                        setIsModalOpen(false);
+                        setProductToDelete(null);
+                      }}
+                      className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+                    >
+                      Batal
                     </button>
-                    <button onClick={() => setIsModalOpen(false)} className="flex items-center justify-center gap-2 px-6 py-4 rounded-full font-bold text-tertiary bg-surface-container-high">
-                      <XCircle size={20} /> Batalkan
-                    </button>
-                    <button onClick={checkStatusManual} className="flex items-center justify-center gap-2 px-6 py-4 rounded-full font-bold text-on-primary bg-gradient-to-r from-primary to-primary-container shadow-lg">
-                      <RefreshCw size={20} /> Cek Status
+                    <button 
+                      onClick={confirmDeleteProduct}
+                      disabled={isProcessing}
+                      className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-bold shadow-lg shadow-red-600/20 hover:bg-red-700 transition-all flex items-center justify-center gap-2"
+                    >
+                      {isProcessing ? <RefreshCw className="animate-spin" size={20} /> : <Trash2 size={20} />}
+                      Ya, Hapus!
                     </button>
                   </div>
-                </>
+                </div>
               )}
             </motion.div>
           </div>
@@ -932,20 +1164,18 @@ export default function App() {
       <AnimatePresence>
         {notification && (
           <motion.div 
-            initial={{ y: 50, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 50, opacity: 0 }}
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
             className={cn(
-              "fixed bottom-8 left-1/2 -translate-x-1/2 px-8 py-5 rounded-2xl shadow-2xl z-[999] flex items-center gap-4 text-white font-black text-lg min-w-[320px] justify-between",
-              notification.type === 'success' ? "bg-teal-600" : "bg-red-600"
+              "fixed bottom-8 left-1/2 -translate-x-1/2 px-8 py-4 rounded-2xl shadow-2xl z-[200] flex items-center gap-3 min-w-[320px]",
+              notification.type === 'success' ? "bg-teal-600 text-white" : "bg-red-600 text-white"
             )}
           >
-            <div className="flex items-center gap-3">
-              {notification.type === 'success' ? <CheckCircle2 size={24} /> : <AlertCircle size={24} />}
-              <span>{notification.message}</span>
-            </div>
-            <button onClick={() => setNotification(null)} className="hover:bg-white/20 p-1 rounded-full transition-colors">
-              <X size={20} />
+            {notification.type === 'success' ? <CheckCircle2 size={24} /> : <AlertCircle size={24} />}
+            <span className="font-bold">{notification.message}</span>
+            <button onClick={() => setNotification(null)} className="ml-auto p-1 hover:bg-white/20 rounded-full transition-colors">
+              <X size={18} />
             </button>
           </motion.div>
         )}

@@ -6,10 +6,28 @@ service cloud.firestore {
     // ===============================================================
     //
     // Collection: inventory
-    // Fields: sku, name, category, costPrice, sellingPrice, isActive
+    // Document ID: {productId} (often SKU)
+    // Fields:
+    //   - sku: string (required)
+    //   - name: string (required, size 1-100)
+    //   - category: string (required)
+    //   - costPrice: number (required, positive)
+    //   - sellingPrice: number (required, positive)
+    //   - isActive: bool (required)
     //
     // Collection: transactions
-    // Fields: transactionId, timestamp, productId, productName, customerId, costPrice, sellingPrice, profit, paymentMethod, status
+    // Document ID: {transactionId}
+    // Fields:
+    //   - transactionId: string (required)
+    //   - timestamp: string (required, ISO 8601)
+    //   - productId: string (required)
+    //   - productName: string (optional)
+    //   - customerId: string (required)
+    //   - costPrice: number (required)
+    //   - sellingPrice: number (required)
+    //   - profit: number (required)
+    //   - paymentMethod: string (required, enum: CASH, QRIS)
+    //   - status: string (required, enum: SUCCESS, PENDING, FAILED)
     //
     // Collection: settings
     // Document ID: config
@@ -24,47 +42,86 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "agusthinuspaide@gmail.com" && request.auth.token.email_verified == true));
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "agusthinuspaide@gmail.com"));
     }
 
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // Domain Validators
     function isValidProduct(data) {
-      return data.sku is string && data.sku.size() > 0 &&
-             data.name is string && data.name.size() > 0 &&
+      return hasOnlyAllowedFields(['sku', 'name', 'category', 'costPrice', 'sellingPrice', 'isActive']) &&
+             data.sku is string && data.sku.size() > 0 && data.sku.size() <= 50 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
              data.category is string &&
-             data.costPrice is number &&
-             data.sellingPrice is number &&
+             data.costPrice is number && data.costPrice >= 0 &&
+             data.sellingPrice is number && data.sellingPrice >= 0 &&
              data.isActive is bool;
     }
 
     function isValidTransaction(data) {
-      return data.transactionId is string &&
+      return hasOnlyAllowedFields(['transactionId', 'timestamp', 'productId', 'productName', 'customerId', 'costPrice', 'sellingPrice', 'profit', 'paymentMethod', 'status', 'qrUrl', 'reference', 'method']) &&
+             data.transactionId is string &&
+             isValidDateString(data.timestamp) &&
              data.productId is string &&
+             data.customerId is string &&
              data.costPrice is number &&
              data.sellingPrice is number &&
+             data.profit is number &&
+             data.paymentMethod in ['CASH', 'QRIS'] &&
              data.status in ['SUCCESS', 'PENDING', 'FAILED'];
+    }
+
+    function isValidSettings(data) {
+      return hasOnlyAllowedFields(['storeName', 'logoUrl', 'duitkuMerchantCode', 'duitkuApiKey', 'digiflazzUsername', 'digiflazzApiKey']) &&
+             (data.storeName is string || !('storeName' in data)) &&
+             (data.logoUrl is string || !('logoUrl' in data)) &&
+             (data.duitkuMerchantCode is string || !('duitkuMerchantCode' in data)) &&
+             (data.duitkuApiKey is string || !('duitkuApiKey' in data)) &&
+             (data.digiflazzUsername is string || !('digiflazzUsername' in data)) &&
+             (data.digiflazzApiKey is string || !('digiflazzApiKey' in data));
     }
 
     // Rules
     match /inventory/{productId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() && isValidProduct(request.resource.data);
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidProduct(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /transactions/{transactionId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
+      allow read: if true;
+      allow create: if true; // Allow backend to create transactions
       allow update: if isAdmin() && isValidTransaction(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /settings/config {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow read: if true;
+      allow write: if isAdmin() && isValidSettings(request.resource.data);
     }
 
     match /users/{userId} {
-      allow read: if isAuthenticated() && request.auth.uid == userId;
-      allow write: if isAdmin();
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow update: if isAdmin();
     }
   }
 }

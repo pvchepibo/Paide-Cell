@@ -20,5 +20,33 @@ export const api = {
   getSupplierBalance: async () => {
     const response = await axios.get('/api/supplier/balance');
     return response.data;
+  },
+  getInventory: async () => {
+    const response = await axios.get('/api/inventory');
+    return response.data;
+  },
+  addInventory: async (product: any) => {
+    const response = await axios.post('/api/inventory', product);
+    return response.data;
+  },
+  updateInventory: async (sku: string, updates: any) => {
+    const response = await axios.put(`/api/inventory/${sku}`, updates);
+    return response.data;
+  },
+  deleteInventory: async (sku: string) => {
+    const response = await axios.delete(`/api/inventory/${sku}`);
+    return response.data;
+  },
+  getSettings: async () => {
+    const response = await axios.get('/api/settings');
+    return response.data;
+  },
+  updateSettings: async (settings: any) => {
+    const response = await axios.post('/api/settings', settings);
+    return response.data;
+  },
+  getReports: async () => {
+    const response = await axios.get('/api/reports');
+    return response.data;
   }
 };
